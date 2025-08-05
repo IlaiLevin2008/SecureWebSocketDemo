@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Vulnerable Web Page</title>
+    <style>
+        body { font-family: sans-serif; padding: 20px; }
+        input { width: 300px; padding: 5px; }
+        button { padding: 5px 10px; }
+        #log { margin-top: 20px; border: 1px solid #ccc; padding: 10px; min-height: 100px; }
+    </style>
+</head>
+<body>
+    <h1>Vulnerable Messenger</h1>
+    <p>This page sends your messages in plain text. Your message will be visible to the Packet Analyzer tool.</p>
+
+    <input type="text" id="messageInput" placeholder="Type your secret message...">
+    <button onclick="sendMessage()">Send Unencrypted</button>
+    
+    <div id="log"></div>
+
+    <script>
+        const log = document.getElementById('log');
+        const socket = new WebSocket('ws://localhost:8000/');
+
+        socket.onopen = (event) => {
+            logMessage('Connected to Packet Analyzer.', 'info');
+        };
+
+        socket.onclose = (event) => {
+            logMessage('Disconnected.', 'error');
+        };
+
+        socket.onerror = (event) => {
+            logMessage('Connection error.', 'error');
+        };
+
+        function sendMessage() {
+            const input = document.getElementById('messageInput');
+            const message = input.value;
+            if (message) {
+                socket.send(message);
+                logMessage(`Sent: ${message}`, 'sent');
+                input.value = '';
+            }
+        }
+
+        function logMessage(message, type) {
+            const div = document.createElement('div');
+            div.textContent = `[${type.toUpperCase()}] ${message}`;
+            log.appendChild(div);
+        }
+    </script>
+</body>
+</html>
