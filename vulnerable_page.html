@@ -2,40 +2,76 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Vulnerable Web Page</title>
+    <title>Vulnerable Messenger</title>
     <style>
         body { font-family: sans-serif; padding: 20px; }
         input { width: 300px; padding: 5px; }
         button { padding: 5px 10px; }
         #log { margin-top: 20px; border: 1px solid #ccc; padding: 10px; min-height: 100px; }
+        #connect-section { margin-bottom: 15px; }
+        .status-dot { height: 15px; width: 15px; background-color: red; border-radius: 50%; display: inline-block; margin-right: 10px; }
+        .status-dot.connected { background-color: green; }
     </style>
 </head>
 <body>
     <h1>Vulnerable Messenger</h1>
-    <p>This page sends your messages in plain text. Your message will be visible to the Packet Analyzer tool.</p>
+    <p>This page sends messages without encryption. The Packet Analyzer will be able to read everything you send.</p>
 
-    <input type="text" id="messageInput" placeholder="Type your secret message...">
+    <div id="connect-section">
+        <span id="status-light" class="status-dot"></span><span id="status-text">Disconnected</span>
+        <input type="text" id="ipInput" placeholder="Enter IP address (e.g., 127.0.0.1)">
+        <button onclick="connect()">Connect</button>
+    </div>
+
+    <input type="text" id="messageInput" placeholder="Type a message...">
     <button onclick="sendMessage()">Send Unencrypted</button>
     
     <div id="log"></div>
 
     <script>
         const log = document.getElementById('log');
-        const socket = new WebSocket('ws://localhost:8000/');
+        let socket;
+        let isConnected = false;
 
-        socket.onopen = (event) => {
-            logMessage('Connected to Packet Analyzer.', 'info');
-        };
+        function updateStatus(connected) {
+            isConnected = connected;
+            const statusLight = document.getElementById('status-light');
+            const statusText = document.getElementById('status-text');
+            if (connected) {
+                statusLight.classList.add('connected');
+                statusText.textContent = 'Connected';
+            } else {
+                statusLight.classList.remove('connected');
+                statusText.textContent = 'Disconnected';
+            }
+        }
 
-        socket.onclose = (event) => {
-            logMessage('Disconnected.', 'error');
-        };
+        function connect() {
+            const ip = document.getElementById('ipInput').value || '127.0.0.1';
+            const fullUrl = `ws://${ip}:8000/`;
+            socket = new WebSocket(fullUrl);
 
-        socket.onerror = (event) => {
-            logMessage('Connection error.', 'error');
-        };
+            socket.onopen = () => {
+                logMessage(`Connected to ${ip}.`, 'info');
+                updateStatus(true);
+            };
+    
+            socket.onclose = () => {
+                logMessage('Disconnected.', 'error');
+                updateStatus(false);
+            };
+    
+            socket.onerror = (event) => {
+                logMessage(`Connection error to ${ip}.`, 'error');
+            };
+        }
 
         function sendMessage() {
+            if (!isConnected) {
+                logMessage('Not connected. Please connect first.', 'error');
+                return;
+            }
+
             const input = document.getElementById('messageInput');
             const message = input.value;
             if (message) {
@@ -49,6 +85,7 @@
             const div = document.createElement('div');
             div.textContent = `[${type.toUpperCase()}] ${message}`;
             log.appendChild(div);
+            log.scrollTop = log.scrollHeight;
         }
     </script>
 </body>

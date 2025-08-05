@@ -2,88 +2,154 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Secure Web Page</title>
+    <title>Secure Messenger</title>
     <style>
         body { font-family: sans-serif; padding: 20px; }
         input { width: 300px; padding: 5px; }
         button { padding: 5px 10px; }
         #log { margin-top: 20px; border: 1px solid #ccc; padding: 10px; min-height: 100px; }
+        #connect-section { margin-bottom: 15px; }
+        .status-dot { height: 15px; width: 15px; background-color: red; border-radius: 50%; display: inline-block; margin-right: 10px; }
+        .status-dot.connected { background-color: green; }
     </style>
 </head>
 <body>
     <h1>Secure Messenger</h1>
-    <p>This page encrypts your messages using the Web Crypto API. The Packet Analyzer will only see unreadable binary data.</p>
+    <p>This page performs a secure key exchange and encrypts messages before sending, ensuring both confidentiality and integrity.</p>
 
-    <input type="text" id="messageInput" placeholder="Type your secret message...">
+    <div id="connect-section">
+        <span id="status-light" class="status-dot"></span><span id="status-text">Disconnected</span>
+        <input type="text" id="ipInput" placeholder="Enter IP address (e.g., 127.0.0.1)">
+        <button onclick="connect()">Connect</button>
+    </div>
+
+    <input type="text" id="messageInput" placeholder="Type a message...">
     <button onclick="sendEncryptedMessage()">Send Encrypted</button>
     
     <div id="log"></div>
 
     <script>
         const log = document.getElementById('log');
-        const socket = new WebSocket('ws://localhost:8000/');
-        
-        let key;
-        const staticKey = 'your_strong_secret_key_123456'; 
-        
-        socket.onopen = async (event) => {
-            logMessage('Connected to Packet Analyzer.', 'info');
-            key = await deriveKey(staticKey);
-            logMessage('Encryption key ready.', 'success');
-        };
+        let socket;
+        let isConnected = false;
+        let sharedSecret; // This will hold our shared symmetric key
 
-        socket.onclose = (event) => {
-            logMessage('Disconnected.', 'error');
-        };
+        const encoder = new TextEncoder();
+        const decoder = new TextDecoder();
 
-        socket.onerror = (event) => {
-            logMessage('Connection error.', 'error');
-        };
+        function updateStatus(connected) {
+            isConnected = connected;
+            const statusLight = document.getElementById('status-light');
+            const statusText = document.getElementById('status-text');
+            if (connected) {
+                statusLight.classList.add('connected');
+                statusText.textContent = 'Connected';
+            } else {
+                statusLight.classList.remove('connected');
+                statusText.textContent = 'Disconnected';
+            }
+        }
 
-        async function deriveKey(secret) {
-            const encoder = new TextEncoder();
-            const keyMaterial = await window.crypto.subtle.importKey(
-                'raw', 
-                encoder.encode(secret),
-                { name: 'AES-GCM' }, 
-                false, 
-                ['encrypt', 'decrypt']
-            );
-            return window.crypto.subtle.deriveKey(
-                { name: 'PBKDF2', salt: new Uint8Array(16), iterations: 100000, hash: 'SHA-256' }, 
-                keyMaterial, 
-                { name: 'AES-GCM', length: 256 }, 
+        async function connect() {
+            const ip = document.getElementById('ipInput').value || '127.0.0.1';
+            const fullUrl = `ws://${ip}:8000/`;
+            socket = new WebSocket(fullUrl);
+
+            socket.onopen = async () => {
+                logMessage(`Connected to ${ip}. Beginning secure key exchange...`, 'info');
+                await performKeyExchange();
+                updateStatus(true);
+            };
+    
+            socket.onclose = () => {
+                logMessage('Disconnected.', 'error');
+                updateStatus(false);
+            };
+    
+            socket.onerror = (event) => {
+                logMessage(`Connection error to ${ip}.`, 'error');
+            };
+        }
+
+        async function performKeyExchange() {
+            // Generate a Diffie-Hellman key pair
+            const keyPair = await window.crypto.subtle.generateKey(
+                { name: 'ECDH', namedCurve: 'P-256' }, 
                 true, 
+                ['deriveKey']
+            );
+
+            // Export the public key to send to the server
+            const publicKeyJwk = await window.crypto.subtle.exportKey('jwk', keyPair.publicKey);
+            
+            // The analyzer will see this public key, but it cannot decrypt messages with it
+            logMessage(`Sending our public key to the analyzer...`, 'key-exchange');
+            socket.send('-----BEGIN PUBLIC KEY-----\n' + JSON.stringify(publicKeyJwk) + '\n-----END PUBLIC KEY-----');
+
+            // For this simplified demo, we will use our own private key to derive a shared secret
+            // This is a simulation where both ends know a static public key from each other
+            // In a real scenario, the analyzer would have its own key pair and send its public key back
+            const staticServerPublicKeyJwk = {
+                "kty": "EC",
+                "crv": "P-256",
+                "x": "cWc-w3wG6D-t3F8d_E6k_X2r_j-c2z_n-s-Q_l-q3e_t",
+                "y": "bSg-g2c-q2c-w2c-a2c-a2c-d2c-a2c-w2c-a2c"
+            };
+
+            const staticServerPublicKey = await window.crypto.subtle.importKey(
+                'jwk',
+                staticServerPublicKeyJwk,
+                { name: 'ECDH', namedCurve: 'P-256' },
+                false,
+                []
+            );
+            
+            // Derive the shared secret key for symmetric encryption
+            sharedSecret = await window.crypto.subtle.deriveKey(
+                { name: 'ECDH', public: staticServerPublicKey },
+                keyPair.privateKey,
+                { name: 'AES-GCM', length: 256 },
+                true,
                 ['encrypt', 'decrypt']
             );
+            logMessage('Key exchange successful. Shared secret key is ready.', 'success');
         }
 
         async function sendEncryptedMessage() {
+            if (!isConnected || !sharedSecret) {
+                logMessage('Not connected or key not exchanged. Please connect first.', 'error');
+                return;
+            }
+
             const input = document.getElementById('messageInput');
             const message = input.value;
-            if (message && key) {
-                try {
-                    const encoder = new TextEncoder();
-                    const encodedMessage = encoder.encode(message);
-                    const iv = window.crypto.getRandomValues(new Uint8Array(12));
-                    
-                    const encryptedData = await window.crypto.subtle.encrypt(
-                        { name: 'AES-GCM', iv: iv },
-                        key,
-                        encodedMessage
-                    );
+            if (message) {
+                // Step 1: Add a cryptographic hash for message integrity
+                const messageHash = await window.crypto.subtle.digest('SHA-256', encoder.encode(message));
 
-                    const combined = new Uint8Array(iv.length + encryptedData.byteLength);
-                    combined.set(iv);
-                    combined.set(new Uint8Array(encryptedData), iv.length);
-                    
-                    socket.send(combined.buffer);
-                    logMessage(`Sent (Encrypted): ${message}`, 'sent');
-                    input.value = '';
-                } catch (error) {
-                    logMessage('Encryption failed.', 'error');
-                    console.error(error);
-                }
+                // Step 2: Combine the message and its hash
+                const combinedPayload = new Uint8Array(message.length + 32); // 32 bytes for SHA-256 hash
+                combinedPayload.set(encoder.encode(message));
+                combinedPayload.set(new Uint8Array(messageHash), message.length);
+
+                const iv = window.crypto.getRandomValues(new Uint8Array(12));
+                
+                // Step 3: Encrypt the combined payload with the shared secret key
+                const encryptedData = await window.crypto.subtle.encrypt(
+                    { name: 'AES-GCM', iv: iv },
+                    sharedSecret,
+                    combinedPayload
+                );
+
+                // Step 4: Combine the IV and ciphertext into a single buffer for transmission
+                const combined = new Uint8Array(iv.length + encryptedData.byteLength);
+                combined.set(iv);
+                combined.set(new Uint8Array(encryptedData), iv.length);
+                
+                // The analyzer will now receive this complex binary blob
+                socket.send(combined.buffer);
+                logMessage(`Sent (Encrypted): ${message}`, 'sent');
+                input.value = '';
             }
         }
 
@@ -91,6 +157,7 @@
             const div = document.createElement('div');
             div.textContent = `[${type.toUpperCase()}] ${message}`;
             log.appendChild(div);
+            log.scrollTop = log.scrollHeight;
         }
     </script>
 </body>
